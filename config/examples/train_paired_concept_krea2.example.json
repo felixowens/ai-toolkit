@@ -1,0 +1,132 @@
+{
+  "job": "extension",
+  "config": {
+    "name": "krea2_ass_size_paired_concept_example",
+    "process": [
+      {
+        "type": "diffusion_trainer",
+        "training_folder": "/home/Ubuntu/workspace/ai-toolkit/output",
+        "sqlite_db_path": "/home/Ubuntu/workspace/ai-toolkit/aitk_db.db",
+        "device": "cuda:0",
+        "trigger_word": "asssize",
+        "performance_log_every": 10,
+        "network": {
+          "type": "lokr",
+          "linear": 32,
+          "linear_alpha": 32,
+          "lokr_full_rank": true,
+          "lokr_factor": 16,
+          "network_kwargs": {
+            "ignore_if_contains": []
+          }
+        },
+        "save": {
+          "dtype": "bf16",
+          "save_every": 100,
+          "max_step_saves_to_keep": 10,
+          "save_format": "diffusers",
+          "push_to_hub": false
+        },
+        "datasets": [
+          {
+            "default_caption": "",
+            "caption_ext": "txt",
+            "caption_dropout_rate": 0,
+            "cache_latents_to_disk": true,
+            "is_reg": false,
+            "network_weight": 1,
+            "resolution": [
+              768
+            ],
+            "num_frames": 1,
+            "flip_x": false,
+            "flip_y": false,
+            "type": "paired_image",
+            "dataset_path": "/home/Ubuntu/workspace/ai-toolkit/datasets/ass_size_pairs.json"
+          }
+        ],
+        "train": {
+          "batch_size": 1,
+          "steps": 1000,
+          "gradient_accumulation": 1,
+          "train_unet": true,
+          "train_text_encoder": false,
+          "gradient_checkpointing": true,
+          "noise_scheduler": "flowmatch",
+          "optimizer": "automagic2",
+          "optimizer_params": {
+            "weight_decay": 0.0001
+          },
+          "lr": 0.0001,
+          "lr_scheduler": "constant",
+          "timestep_type": "sigmoid",
+          "content_or_style": "balanced",
+          "cache_text_embeddings": true,
+          "unload_text_encoder": true,
+          "ema_config": {
+            "use_ema": false,
+            "ema_decay": 0.99
+          },
+          "skip_first_sample": true,
+          "disable_sampling": true,
+          "dtype": "bf16",
+          "loss_type": "mse",
+          "paired_concept": true,
+          "paired_difference_multiplier": 1.0,
+          "paired_preservation_multiplier": 1.0,
+          "paired_difference_timestep_power": 2.0,
+          "first_timestep_chance": 0.25
+        },
+        "model": {
+          "name_or_path": "/home/Ubuntu/workspace/ai-toolkit/models/krea2_raw_kroma_s1/raw-kroma-s1.safetensors",
+          "arch": "krea2",
+          "quantize": true,
+          "qtype": "qint8",
+          "quantize_te": true,
+          "qtype_te": "qint8",
+          "low_vram": true,
+          "model_kwargs": {
+            "text_encoder_path": "/home/Ubuntu/workspace/ai-toolkit/models/qwen3_vl_4b",
+            "vae_path": "/home/Ubuntu/workspace/ai-toolkit/models/qwen_image_vae"
+          },
+          "compile": false
+        },
+        "sample": {
+          "sampler": "flowmatch",
+          "sample_every": 100,
+          "width": 768,
+          "height": 768,
+          "samples": [
+            {
+              "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight",
+              "network_multiplier": 0
+            },
+            {
+              "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight",
+              "network_multiplier": 1
+            },
+            {
+              "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight, asssize",
+              "network_multiplier": 1
+            }
+          ],
+          "neg": "",
+          "seed": 42,
+          "walk_seed": false,
+          "guidance_scale": 4,
+          "sample_steps": 50,
+          "num_frames": 1
+        },
+        "logging": {
+          "log_every": 1,
+          "use_ui_logger": true
+        },
+        "training_seed": 42
+      }
+    ]
+  },
+  "meta": {
+    "name": "krea2_ass_size_paired_concept_example",
+    "version": "1.0"
+  }
+}

@@ -493,6 +493,12 @@ class TrainConfig:
         self.diff_output_preservation_multiplier = kwargs.get('diff_output_preservation_multiplier', 1.0)
         # If the trigger word is in the prompt, we will use this class name to replace it eg. "sks woman" -> "woman"
         self.diff_output_preservation_class = kwargs.get('diff_output_preservation_class', '')
+        # Paired concept training uses a real negative image for preservation and
+        # matches the prediction difference between the two aligned images.
+        self.paired_concept = kwargs.get('paired_concept', False)
+        self.paired_difference_multiplier = float(kwargs.get('paired_difference_multiplier', 1.0))
+        self.paired_preservation_multiplier = float(kwargs.get('paired_preservation_multiplier', 1.0))
+        self.paired_difference_timestep_power = float(kwargs.get('paired_difference_timestep_power', 2.0))
         
         # blank prompt preservation will preserve the model's knowledge of a blank prompt
         self.blank_prompt_preservation = kwargs.get('blank_prompt_preservation', False)
@@ -1497,6 +1503,23 @@ def validate_configs(
     save_config: SaveConfig,
     dataset_configs: List[DatasetConfig]
 ):
+    if train_config.paired_concept:
+        if not dataset_configs or any(dataset.type != 'paired_image' for dataset in dataset_configs):
+            raise ValueError("paired_concept requires only paired_image datasets")
+        if model_config.arch != 'krea2' or train_config.noise_scheduler != 'flowmatch':
+            raise ValueError("paired_concept currently supports Krea2 flow matching only")
+        if train_config.train_text_encoder or train_config.diff_output_preservation or train_config.blank_prompt_preservation:
+            raise ValueError("paired_concept requires a frozen text encoder and cannot be combined with DOP/BPP")
+        if train_config.do_cfg or train_config.do_guidance_loss or train_config.single_item_batching:
+            raise ValueError("paired_concept does not support CFG, guidance loss, or single item batching")
+        if train_config.loss_target != 'noise' or train_config.train_turbo:
+            raise ValueError("paired_concept requires the ordinary flow matching target")
+        if min(train_config.paired_difference_multiplier, train_config.paired_preservation_multiplier,
+               train_config.paired_difference_timestep_power) < 0:
+            raise ValueError("paired_concept loss weights and timestep power must be nonnegative")
+        if any(dataset.caption_dropout_rate or dataset.token_dropout_rate or dataset.shuffle_tokens
+               for dataset in dataset_configs):
+            raise ValueError("paired_concept requires fixed captions without dropout or token shuffling")
     if model_config.is_flux:
         if save_config.save_format != 'diffusers':
             # make it diffusers

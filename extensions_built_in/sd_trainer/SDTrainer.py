@@ -100,6 +100,10 @@ class SDTrainer(BaseSDTrainProcess):
                 raise ValueError("diff_output_preservation requires a network to be set")
             if self.train_config.train_text_encoder:
                 raise ValueError("diff_output_preservation is not supported with train_text_encoder")
+
+        if self.train_config.paired_concept:
+            if self.network_config is None or self.adapter_config is not None or self.embed_config is not None:
+                raise ValueError("paired_concept requires a LoRA/LoKr network without an extra adapter or embedding")
         
         if self.train_config.blank_prompt_preservation:
             if self.network_config is None:
@@ -1448,6 +1452,8 @@ class SDTrainer(BaseSDTrainProcess):
         # only; the returned loss stays unscaled for logging.
         if getattr(self.sd, 'is_llm', False):
             return self.train_llm_accumulation(batch, accum_scale=accum_scale)
+        if self.train_config.paired_concept:
+            return self.train_paired_concept_accumulation(batch, accum_scale=accum_scale)
         with torch.no_grad():
             self.timer.start('preprocess_batch')
             if isinstance(self.adapter, CustomAdapter):
@@ -2321,6 +2327,95 @@ class SDTrainer(BaseSDTrainProcess):
 
         return loss.detach()
         # flush()
+
+    def train_paired_concept_accumulation(self, batch: DataLoaderBatchDTO, accum_scale: float = 1.0):
+        """Train the positive example while preserving and contrasting its matched negative."""
+        negative_batch = batch.paired_negative_batch
+        dtype = get_torch_dtype(self.train_config.dtype)
+        with torch.no_grad():
+            positive_batch = self.preprocess_batch(batch)
+            negative_batch = self.preprocess_batch(negative_batch)
+            positive_noisy, noise, timesteps, positive_prompts, _ = self.process_general_training_batch(
+                positive_batch
+            )
+            if negative_batch.latents is None:
+                images = negative_batch.tensor.to(self.device_torch, dtype=dtype)
+                negative_batch.latents = self.sd.encode_images(images)
+            negative_latents = negative_batch.latents.to(self.device_torch, dtype=dtype)
+            positive_latents = positive_batch.latents.to(self.device_torch, dtype=dtype)
+            if positive_latents.shape != negative_latents.shape:
+                raise ValueError("Paired concept latent shapes must match")
+            negative_noisy = self.sd.add_noise(negative_latents, noise, timesteps).detach()
+
+            def get_embeds(item_batch, prompts):
+                if item_batch.prompt_embeds is not None:
+                    return item_batch.prompt_embeds.clone().detach().to(self.device_torch, dtype=dtype)
+                return self.sd.encode_prompt(prompts).detach().to(self.device_torch, dtype=dtype)
+
+            positive_embeds = get_embeds(positive_batch, positive_prompts)
+            negative_embeds = get_embeds(negative_batch, negative_batch.get_caption_list())
+            positive_target = (noise - positive_latents).detach()
+            negative_target = (noise - negative_latents).detach()
+
+        network = self.network
+        network.multiplier = positive_batch.get_network_weight_list()
+        with network:
+            base_negative = self.get_prior_prediction(
+                noisy_latents=negative_noisy,
+                conditional_embeds=negative_embeds,
+                match_adapter_assist=False,
+                network_weight_list=network.multiplier,
+                timesteps=timesteps,
+                pred_kwargs={},
+                batch=negative_batch,
+                noise=noise,
+            ).detach()
+            predicted_positive = self.predict_noise(
+                noisy_latents=positive_noisy,
+                timesteps=timesteps,
+                conditional_embeds=positive_embeds,
+                batch=positive_batch,
+            )
+            predicted_negative = self.predict_noise(
+                noisy_latents=negative_noisy,
+                timesteps=timesteps,
+                conditional_embeds=negative_embeds,
+                batch=negative_batch,
+            )
+
+            positive_loss, preservation_loss, difference_loss = self.calculate_paired_concept_losses(
+                predicted_positive, predicted_negative, base_negative,
+                positive_target, negative_target, timesteps,
+                self.train_config.num_train_timesteps,
+                self.train_config.paired_difference_timestep_power,
+            )
+            loss = (
+                positive_loss
+                + self.train_config.paired_preservation_multiplier * preservation_loss
+                + self.train_config.paired_difference_multiplier * difference_loss
+            )
+            if not torch.isfinite(loss):
+                raise ValueError("Non-finite paired concept loss")
+            self.additional_logs['loss/paired_positive'] = positive_loss.item()
+            self.additional_logs['loss/paired_preservation'] = preservation_loss.item()
+            self.additional_logs['loss/paired_difference'] = difference_loss.item()
+            self.accelerator.backward(loss * accum_scale)
+        return loss.detach()
+
+    @staticmethod
+    def calculate_paired_concept_losses(positive_pred, negative_pred, base_negative,
+                                        positive_target, negative_target, timesteps,
+                                        num_train_timesteps, timestep_power):
+        positive_loss = F.mse_loss(positive_pred.float(), positive_target.float())
+        preservation_loss = F.mse_loss(negative_pred.float(), base_negative.float())
+        # Shared noise cancels from the flow target difference. At high noise the
+        # two inputs converge, so the caption must account for the target change.
+        prediction_difference = positive_pred.float() - negative_pred.float()
+        target_difference = positive_target.float() - negative_target.float()
+        per_pair_difference = (prediction_difference - target_difference).square().flatten(1).mean(1)
+        timestep_weight = (timesteps.float() / num_train_timesteps).clamp(0, 1).pow(timestep_power)
+        difference_loss = (per_pair_difference * timestep_weight).mean()
+        return positive_loss, preservation_loss, difference_loss
 
     def hook_train_loop(self, batch: Union[DataLoaderBatchDTO, List[DataLoaderBatchDTO]]):
         if isinstance(batch, list):

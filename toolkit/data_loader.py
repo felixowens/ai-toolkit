@@ -661,11 +661,94 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             return self._get_single_item(item)
 
 
+class PairedAiToolkitDataset(AiToolkitDataset):
+    """One positive file item per example, with an aligned negative item attached."""
+
+    def __init__(self, dataset_config, batch_size=1, sd=None):
+        path = dataset_config.dataset_path
+        if path is None or not os.path.isfile(path):
+            raise ValueError("paired_image requires dataset_path pointing to a JSON manifest")
+        with open(path, 'r', encoding='utf-8') as handle:
+            records = json.load(handle)
+        if not isinstance(records, dict) or not records:
+            raise ValueError("paired_image manifest must be a nonempty mapping of positive image paths")
+        for positive_path, record in records.items():
+            if not isinstance(record, dict) or not all(record.get(key) for key in
+                    ('caption', 'negative_image', 'negative_caption')):
+                raise ValueError(f"Incomplete paired_image record: {positive_path}")
+            if not os.path.isfile(positive_path) or not os.path.isfile(record['negative_image']):
+                raise ValueError(f"Missing paired image: {positive_path}")
+            if positive_path == record['negative_image']:
+                raise ValueError(f"Positive and negative images must differ: {positive_path}")
+            trigger = dataset_config.trigger_word
+            if trigger is None or trigger not in record['caption'] or trigger in record['negative_caption']:
+                raise ValueError(f"Positive caption must contain the trigger and negative must omit it: {positive_path}")
+        if dataset_config.flip_x or dataset_config.flip_y or dataset_config.random_crop or dataset_config.random_scale:
+            raise ValueError("paired_image currently requires fixed, unflipped crops")
+        self.pair_records = records
+        super().__init__(dataset_config, batch_size=batch_size, sd=sd)
+
+        negative_config = copy.copy(dataset_config)
+        negative_config.trigger_word = None
+        self.negative_file_list = []
+        dataset_folder = os.path.dirname(path)
+        for positive in self.file_list:
+            record = records[positive.path]
+            negative = FileItemDTO(
+                sd=sd,
+                path=record['negative_image'],
+                dataset_config=negative_config,
+                dataloader_transforms=self.transform,
+                size_database=self.size_database,
+                dataset_root=dataset_folder,
+                text_embedding_space_version=sd.get_text_embedding_space_version(),
+                te_padding_side=sd.te_padding_side,
+                latent_space_version=sd.get_latent_space_version(),
+                raw_caption=record['negative_caption'],
+            )
+            if (positive.width, positive.height) != (negative.width, negative.height):
+                raise ValueError(f"Pair dimensions differ: {positive.path} and {negative.path}")
+            for field in ('scale_to_width', 'scale_to_height', 'crop_x', 'crop_y',
+                          'crop_width', 'crop_height', 'flip_x', 'flip_y'):
+                setattr(negative, field, getattr(positive, field))
+            negative.load_caption()
+            self.negative_file_list.append(negative)
+
+        # Reuse the ordinary per-file caches, including model-specific cache keys.
+        positive_file_list = self.file_list
+        self.file_list = self.negative_file_list
+        try:
+            if self.is_caching_latents:
+                self.cache_latents_all_latents()
+                if len(self.file_list) != len(positive_file_list):
+                    raise ValueError("A negative image failed latent caching; paired training cannot continue")
+            if self.is_caching_text_embeddings:
+                self.cache_text_embeddings()
+        finally:
+            self.file_list = positive_file_list
+
+    def _get_single_item(self, index, _attempts=0):
+        positive = copy.deepcopy(self.file_list[index])
+        negative = copy.deepcopy(self.negative_file_list[index])
+        # A failed member invalidates the pair; never substitute an unrelated image.
+        positive.load_and_process_image(self.transform)
+        negative.load_and_process_image(self.transform)
+        positive.load_caption(self.caption_dict)
+        negative.load_caption()
+        positive.paired_negative = negative
+        return positive
+
+
 def dto_collation(batch: List['FileItemDTO']):
     # must be a module level function so spawned dataloader workers can pickle it
-    return DataLoaderBatchDTO(
+    result = DataLoaderBatchDTO(
         file_items=batch
     )
+    if all(hasattr(item, 'paired_negative') for item in batch):
+        result.paired_negative_batch = DataLoaderBatchDTO(
+            file_items=[item.paired_negative for item in batch]
+        )
+    return result
 
 
 def get_dataloader_from_datasets(
@@ -693,10 +776,11 @@ def get_dataloader_from_datasets(
 
     for config in dataset_config_list:
 
-        if config.type == 'image':
+        if config.type in ('image', 'paired_image'):
             # dataset level batch_size overrides the train config batch_size when set
             dataset_batch_size = config.batch_size if config.batch_size is not None else batch_size
-            dataset = AiToolkitDataset(config, batch_size=dataset_batch_size, sd=sd)
+            dataset_class = PairedAiToolkitDataset if config.type == 'paired_image' else AiToolkitDataset
+            dataset = dataset_class(config, batch_size=dataset_batch_size, sd=sd)
             datasets.append(dataset)
             if config.buckets:
                 has_buckets = True
