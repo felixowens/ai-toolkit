@@ -680,9 +680,12 @@ class PairedAiToolkitDataset(AiToolkitDataset):
                 raise ValueError(f"Missing paired image: {positive_path}")
             if positive_path == record['negative_image']:
                 raise ValueError(f"Positive and negative images must differ: {positive_path}")
-            trigger = dataset_config.trigger_word
-            if trigger is None or trigger not in record['caption'] or trigger in record['negative_caption']:
-                raise ValueError(f"Positive caption must contain the trigger and negative must omit it: {positive_path}")
+            if dataset_config.paired_concept_mode == 'trigger':
+                trigger = dataset_config.trigger_word
+                if trigger is None or trigger not in record['caption'] or trigger in record['negative_caption']:
+                    raise ValueError(f"Positive caption must contain the trigger and negative must omit it: {positive_path}")
+            elif dataset_config.paired_concept_mode != 'slider':
+                raise ValueError("paired_concept_mode must be trigger or slider")
         if dataset_config.flip_x or dataset_config.flip_y or dataset_config.random_crop or dataset_config.random_scale:
             raise ValueError("paired_image currently requires fixed, unflipped crops")
         self.pair_records = records
@@ -726,6 +729,16 @@ class PairedAiToolkitDataset(AiToolkitDataset):
                 self.cache_text_embeddings()
         finally:
             self.file_list = positive_file_list
+
+    def setup_epoch(self):
+        if self.epoch_num == 0 and self.dataset_config.paired_concept_mode == 'slider':
+            # Both ends must have identical conditioning. Reuse the negative
+            # caption from the same manifest so the image change is the signal.
+            self.caption_dict = {
+                path: {'caption': record['negative_caption']}
+                for path, record in self.pair_records.items()
+            }
+        super().setup_epoch()
 
     def _get_single_item(self, index, _attempts=0):
         positive = copy.deepcopy(self.file_list[index])

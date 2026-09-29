@@ -160,6 +160,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for raw_dataset in raw_datasets:
                 raw_dataset['diff_output_preservation'] = True
                 raw_dataset['diff_output_preservation_class'] = self.train_config.diff_output_preservation_class
+
+        if self.train_config.paired_concept and raw_datasets is not None:
+            for raw_dataset in raw_datasets:
+                raw_dataset['paired_concept_mode'] = self.train_config.paired_concept_mode
         
         if raw_datasets is not None and len(raw_datasets) > 0:
             for raw_dataset in raw_datasets:

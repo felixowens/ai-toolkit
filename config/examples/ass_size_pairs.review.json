@@ -1,0 +1,17 @@
+{
+  "/home/Ubuntu/workspace/datasets/ass_size_pairs/images/01big.png": {
+    "caption": "An adult blonde woman crouching on a city street in a fitted white long-sleeved dress, looking back over her shoulder, photographed from behind, asssize",
+    "negative_image": "/home/Ubuntu/workspace/datasets/ass_size_pairs/images/01.jpg",
+    "negative_caption": "An adult blonde woman crouching on a city street in a fitted white long-sleeved dress, looking back over her shoulder, photographed from behind"
+  },
+  "/home/Ubuntu/workspace/datasets/ass_size_pairs/images/02big.webp": {
+    "caption": "An adult blonde woman standing in side profile indoors, wearing a fitted sleeveless black dress, with a round wall mirror behind her, asssize",
+    "negative_image": "/home/Ubuntu/workspace/datasets/ass_size_pairs/images/02.jpg",
+    "negative_caption": "An adult blonde woman standing in side profile indoors, wearing a fitted sleeveless black dress, with a round wall mirror behind her"
+  },
+  "/home/Ubuntu/workspace/datasets/ass_size_pairs/images/03big.webp": {
+    "caption": "An adult brunette woman standing in side profile against a dark brick wall, wearing a fitted orange and yellow sleeveless mini dress, asssize",
+    "negative_image": "/home/Ubuntu/workspace/datasets/ass_size_pairs/images/03.png",
+    "negative_caption": "An adult brunette woman standing in side profile against a dark brick wall, wearing a fitted orange and yellow sleeveless mini dress"
+  }
+}

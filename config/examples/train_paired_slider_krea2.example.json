@@ -1,14 +1,14 @@
 {
   "job": "extension",
   "config": {
-    "name": "krea2_ass_size_paired_concept_example",
+    "name": "krea2_ass_size_paired_slider_example",
     "process": [
       {
         "type": "diffusion_trainer",
         "training_folder": "/home/Ubuntu/workspace/ai-toolkit/output",
         "sqlite_db_path": "/home/Ubuntu/workspace/ai-toolkit/aitk_db.db",
         "device": "cuda:0",
-        "trigger_word": "asssize",
+        "trigger_word": null,
         "performance_log_every": 10,
         "network": {
           "type": "lokr",
@@ -76,7 +76,7 @@
           "paired_preservation_multiplier": 1.0,
           "paired_difference_timestep_power": 2.0,
           "first_timestep_chance": 0.25,
-          "paired_concept_mode": "trigger"
+          "paired_concept_mode": "slider"
         },
         "model": {
           "name_or_path": "/home/Ubuntu/workspace/ai-toolkit/models/krea2_raw_kroma_s1/raw-kroma-s1.safetensors",
@@ -100,14 +100,14 @@
           "samples": [
             {
               "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight",
+              "network_multiplier": -1
+            },
+            {
+              "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight",
               "network_multiplier": 0
             },
             {
               "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight",
-              "network_multiplier": 1
-            },
-            {
-              "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight, asssize",
               "network_multiplier": 1
             }
           ],
@@ -127,7 +127,7 @@
     ]
   },
   "meta": {
-    "name": "krea2_ass_size_paired_concept_example",
+    "name": "krea2_ass_size_paired_slider_example",
     "version": "1.0"
   }
 }

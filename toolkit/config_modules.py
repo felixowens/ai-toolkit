@@ -496,6 +496,7 @@ class TrainConfig:
         # Paired concept training uses a real negative image for preservation and
         # matches the prediction difference between the two aligned images.
         self.paired_concept = kwargs.get('paired_concept', False)
+        self.paired_concept_mode = kwargs.get('paired_concept_mode', 'trigger')
         self.paired_difference_multiplier = float(kwargs.get('paired_difference_multiplier', 1.0))
         self.paired_preservation_multiplier = float(kwargs.get('paired_preservation_multiplier', 1.0))
         self.paired_difference_timestep_power = float(kwargs.get('paired_difference_timestep_power', 2.0))
@@ -937,6 +938,7 @@ class DatasetConfig:
         self.default_caption: str = kwargs.get('default_caption', None)
         # trigger word for just this dataset
         self.trigger_word: str = kwargs.get('trigger_word', None)
+        self.paired_concept_mode: str = kwargs.get('paired_concept_mode', 'trigger')
         # set automatically from the train config when diff output preservation is enabled.
         # the dataset trigger word is replaced with the class in the caption for DOP embeddings
         self.diff_output_preservation: bool = kwargs.get('diff_output_preservation', False)
@@ -1504,8 +1506,16 @@ def validate_configs(
     dataset_configs: List[DatasetConfig]
 ):
     if train_config.paired_concept:
+        if train_config.paired_concept_mode not in ('trigger', 'slider'):
+            raise ValueError("paired_concept_mode must be trigger or slider")
         if not dataset_configs or any(dataset.type != 'paired_image' for dataset in dataset_configs):
             raise ValueError("paired_concept requires only paired_image datasets")
+        if any(dataset.paired_concept_mode != train_config.paired_concept_mode for dataset in dataset_configs):
+            raise ValueError("paired_image datasets must use the training paired_concept_mode")
+        if train_config.paired_concept_mode == 'trigger' and any(not dataset.trigger_word for dataset in dataset_configs):
+            raise ValueError("trigger paired_concept requires a trigger word")
+        if train_config.paired_concept_mode == 'slider' and any(dataset.trigger_word for dataset in dataset_configs):
+            raise ValueError("slider paired_concept must not use a trigger word")
         if model_config.arch != 'krea2' or train_config.noise_scheduler != 'flowmatch':
             raise ValueError("paired_concept currently supports Krea2 flow matching only")
         if train_config.train_text_encoder or train_config.diff_output_preservation or train_config.blank_prompt_preservation:

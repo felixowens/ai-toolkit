@@ -89,6 +89,27 @@ class PairedConceptTest(unittest.TestCase):
             self.assertEqual(batch.latents.shape, batch.paired_negative_batch.latents.shape)
             self.assertGreater(batch.latents.mean().item(), batch.paired_negative_batch.latents.mean().item())
 
+    def test_slider_loader_uses_identical_captions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            positive = root / "positive.png"
+            negative = root / "negative.png"
+            Image.new("RGB", (64, 64), "white").save(positive)
+            Image.new("RGB", (64, 64), "black").save(negative)
+            manifest = root / "pairs.json"
+            manifest.write_text(json.dumps({str(positive): {
+                "caption": "a woman with bigbutt",
+                "negative_image": str(negative),
+                "negative_caption": "a woman",
+            }}))
+            config = DatasetConfig(
+                type="paired_image", paired_concept_mode="slider",
+                dataset_path=str(manifest), resolution=32, num_workers=0, buckets=True,
+            )
+            batch = next(iter(get_dataloader_from_datasets([config], batch_size=1, sd=FakeSD())))
+            self.assertEqual(batch.get_caption_list(), ["a woman"])
+            self.assertEqual(batch.paired_negative_batch.get_caption_list(), ["a woman"])
+
     def test_difference_loss_has_gradients_and_favors_noisy_timesteps(self):
         positive = torch.tensor([[[[1.0]]], [[[1.0]]]], requires_grad=True)
         negative = torch.zeros_like(positive, requires_grad=True)
@@ -132,6 +153,7 @@ class PairedConceptTest(unittest.TestCase):
         trainer.device_torch = torch.device("cpu")
         trainer.train_config = SimpleNamespace(
             dtype="float32", num_train_timesteps=1000,
+            paired_concept_mode="trigger",
             paired_difference_timestep_power=2.0,
             paired_difference_multiplier=1.0,
             paired_preservation_multiplier=1.0,
@@ -157,6 +179,65 @@ class PairedConceptTest(unittest.TestCase):
         self.assertNotEqual(weight.grad.item(), 0)
         self.assertEqual(set(trainer.additional_logs), {
             "loss/paired_positive", "loss/paired_preservation", "loss/paired_difference"
+        })
+
+    def test_slider_step_uses_opposite_network_weights(self):
+        class Batch:
+            def __init__(self, latent):
+                self.latents = latent
+                self.tensor = None
+                self.prompt_embeds = torch.zeros(1, 1)
+
+            def get_caption_list(self):
+                return ["a woman"]
+
+            def get_network_weight_list(self):
+                return [1.0]
+
+        class Network:
+            multiplier = [1.0]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        trainer = SDTrainer.__new__(SDTrainer)
+        trainer.device_torch = torch.device("cpu")
+        trainer.train_config = SimpleNamespace(
+            dtype="float32", num_train_timesteps=1000,
+            paired_concept_mode="slider", paired_difference_timestep_power=2.0,
+            paired_difference_multiplier=1.0, paired_preservation_multiplier=1.0,
+        )
+        trainer.sd = SimpleNamespace(add_noise=lambda latent, noise, timestep: latent + noise)
+        trainer.network = Network()
+        trainer.accelerator = SimpleNamespace(backward=lambda loss: loss.backward())
+        trainer.additional_logs = {}
+        trainer.preprocess_batch = lambda batch: batch
+        noise = torch.ones(1, 1, 1, 1)
+        timestep = torch.tensor([900.0])
+        trainer.process_general_training_batch = lambda batch: (
+            batch.latents + noise, noise, timestep, batch.get_caption_list(), None
+        )
+        weight = torch.nn.Parameter(torch.tensor(0.2))
+        seen_weights = []
+        trainer.get_prior_prediction = lambda **kwargs: torch.zeros_like(kwargs["noisy_latents"])
+
+        def predict_noise(**kwargs):
+            seen_weights.append(trainer.network.multiplier[:])
+            return kwargs["noisy_latents"] * weight * trainer.network.multiplier[0]
+
+        trainer.predict_noise = predict_noise
+        positive = Batch(torch.ones(1, 1, 1, 1))
+        positive.paired_negative_batch = Batch(torch.zeros(1, 1, 1, 1))
+        loss = trainer.train_paired_concept_accumulation(positive)
+        self.assertTrue(torch.isfinite(loss))
+        self.assertEqual(seen_weights, [[1.0], [-1.0]])
+        self.assertNotEqual(weight.grad.item(), 0)
+        self.assertEqual(set(trainer.additional_logs), {
+            "loss/paired_positive", "loss/paired_negative", "loss/paired_preservation",
+            "loss/paired_difference",
         })
 
 

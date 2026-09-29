@@ -2358,7 +2358,9 @@ class SDTrainer(BaseSDTrainProcess):
             negative_target = (noise - negative_latents).detach()
 
         network = self.network
-        network.multiplier = positive_batch.get_network_weight_list()
+        mode = self.train_config.paired_concept_mode
+        positive_weight = positive_batch.get_network_weight_list()
+        network.multiplier = positive_weight
         with network:
             base_negative = self.get_prior_prediction(
                 noisy_latents=negative_noisy,
@@ -2370,12 +2372,26 @@ class SDTrainer(BaseSDTrainProcess):
                 batch=negative_batch,
                 noise=noise,
             ).detach()
+            if mode == 'slider':
+                base_positive = self.get_prior_prediction(
+                    noisy_latents=positive_noisy,
+                    conditional_embeds=positive_embeds,
+                    match_adapter_assist=False,
+                    network_weight_list=network.multiplier,
+                    timesteps=timesteps,
+                    pred_kwargs={},
+                    batch=positive_batch,
+                    noise=noise,
+                ).detach()
+            network.multiplier = positive_weight
             predicted_positive = self.predict_noise(
                 noisy_latents=positive_noisy,
                 timesteps=timesteps,
                 conditional_embeds=positive_embeds,
                 batch=positive_batch,
             )
+            if mode == 'slider':
+                network.multiplier = [-weight for weight in positive_weight]
             predicted_negative = self.predict_noise(
                 noisy_latents=negative_noisy,
                 timesteps=timesteps,
@@ -2383,17 +2399,26 @@ class SDTrainer(BaseSDTrainProcess):
                 batch=negative_batch,
             )
 
-            positive_loss, preservation_loss, difference_loss = self.calculate_paired_concept_losses(
-                predicted_positive, predicted_negative, base_negative,
-                positive_target, negative_target, timesteps,
-                self.train_config.num_train_timesteps,
-                self.train_config.paired_difference_timestep_power,
-            )
-            loss = (
-                positive_loss
-                + self.train_config.paired_preservation_multiplier * preservation_loss
-                + self.train_config.paired_difference_multiplier * difference_loss
-            )
+            if mode == 'slider':
+                positive_loss, negative_loss, preservation_loss, difference_loss = self.calculate_paired_slider_losses(
+                    predicted_positive, predicted_negative, base_positive, base_negative,
+                    positive_target, negative_target, timesteps,
+                    self.train_config.num_train_timesteps,
+                    self.train_config.paired_difference_timestep_power,
+                )
+                self.additional_logs['loss/paired_negative'] = negative_loss.item()
+                reconstruction_loss = (positive_loss + negative_loss) / 2
+            else:
+                positive_loss, preservation_loss, difference_loss = self.calculate_paired_concept_losses(
+                    predicted_positive, predicted_negative, base_negative,
+                    positive_target, negative_target, timesteps,
+                    self.train_config.num_train_timesteps,
+                    self.train_config.paired_difference_timestep_power,
+                )
+                reconstruction_loss = positive_loss
+            loss = (reconstruction_loss
+                    + self.train_config.paired_preservation_multiplier * preservation_loss
+                    + self.train_config.paired_difference_multiplier * difference_loss)
             if not torch.isfinite(loss):
                 raise ValueError("Non-finite paired concept loss")
             self.additional_logs['loss/paired_positive'] = positive_loss.item()
@@ -2416,6 +2441,24 @@ class SDTrainer(BaseSDTrainProcess):
         timestep_weight = (timesteps.float() / num_train_timesteps).clamp(0, 1).pow(timestep_power)
         difference_loss = (per_pair_difference * timestep_weight).mean()
         return positive_loss, preservation_loss, difference_loss
+
+    @staticmethod
+    def calculate_paired_slider_losses(positive_pred, negative_pred, base_positive, base_negative,
+                                       positive_target, negative_target, timesteps,
+                                       num_train_timesteps, timestep_power):
+        positive_loss = F.mse_loss(positive_pred.float(), positive_target.float())
+        negative_loss = F.mse_loss(negative_pred.float(), negative_target.float())
+        # A signed slider should move equally in opposite directions around
+        # the frozen model, limiting an unwanted offset at neutral strength.
+        center_residual = ((positive_pred.float() - base_positive.float())
+                           + (negative_pred.float() - base_negative.float())) / 2
+        preservation_loss = center_residual.square().mean()
+        prediction_difference = positive_pred.float() - negative_pred.float()
+        target_difference = positive_target.float() - negative_target.float()
+        per_pair_difference = (prediction_difference - target_difference).square().flatten(1).mean(1)
+        timestep_weight = (timesteps.float() / num_train_timesteps).clamp(0, 1).pow(timestep_power)
+        difference_loss = (per_pair_difference * timestep_weight).mean()
+        return positive_loss, negative_loss, preservation_loss, difference_loss
 
     def hook_train_loop(self, batch: Union[DataLoaderBatchDTO, List[DataLoaderBatchDTO]]):
         if isinstance(batch, list):
