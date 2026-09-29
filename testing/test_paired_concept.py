@@ -20,6 +20,9 @@ class FakeSD:
     te_padding_side = "right"
     vae = SimpleNamespace(config=SimpleNamespace())
     unet = SimpleNamespace(config=SimpleNamespace())
+    device = "cpu"
+    device_torch = torch.device("cpu")
+    torch_dtype = torch.float32
 
     def get_bucket_divisibility(self):
         return 8
@@ -29,6 +32,15 @@ class FakeSD:
 
     def get_text_embedding_space_version(self):
         return "test"
+
+    def set_device_state_preset(self, *_):
+        pass
+
+    def restore_device_state(self):
+        pass
+
+    def encode_images(self, images):
+        return images[:, :1]
 
 
 class PairedConceptTest(unittest.TestCase):
@@ -55,6 +67,27 @@ class PairedConceptTest(unittest.TestCase):
             self.assertEqual(batch.tensor.shape, batch.paired_negative_batch.tensor.shape)
             self.assertEqual(batch.file_items[0].path, str(positive))
             self.assertEqual(batch.paired_negative_batch.file_items[0].path, str(negative))
+
+    def test_loader_caches_both_pair_latents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            positive = root / "positive.png"
+            negative = root / "negative.png"
+            Image.new("RGB", (64, 64), "white").save(positive)
+            Image.new("RGB", (64, 64), "black").save(negative)
+            manifest = root / "pairs.json"
+            manifest.write_text(json.dumps({str(positive): {
+                "caption": "a woman with bigbutt",
+                "negative_image": str(negative),
+                "negative_caption": "a woman",
+            }}))
+            config = DatasetConfig(
+                type="paired_image", dataset_path=str(manifest), trigger_word="bigbutt",
+                resolution=32, num_workers=0, buckets=True, cache_latents_to_disk=True,
+            )
+            batch = next(iter(get_dataloader_from_datasets([config], batch_size=1, sd=FakeSD())))
+            self.assertEqual(batch.latents.shape, batch.paired_negative_batch.latents.shape)
+            self.assertGreater(batch.latents.mean().item(), batch.paired_negative_batch.latents.mean().item())
 
     def test_difference_loss_has_gradients_and_favors_noisy_timesteps(self):
         positive = torch.tensor([[[[1.0]]], [[[1.0]]]], requires_grad=True)
