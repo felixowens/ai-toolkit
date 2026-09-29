@@ -8,7 +8,7 @@
         "training_folder": "/home/Ubuntu/workspace/ai-toolkit/output",
         "sqlite_db_path": "/home/Ubuntu/workspace/ai-toolkit/aitk_db.db",
         "device": "cuda:0",
-        "trigger_word": "asssize",
+        "trigger_word": "big buttocks",
         "performance_log_every": 10,
         "network": {
           "type": "lokr",
@@ -107,7 +107,7 @@
               "network_multiplier": 1
             },
             {
-              "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight, asssize",
+              "prompt": "A clear three-quarter rear-view photograph of an adult woman in opaque leggings, neutral background, natural proportions and soft daylight, big buttocks",
               "network_multiplier": 1
             }
           ],

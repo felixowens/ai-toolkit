@@ -2,7 +2,7 @@
 
 The two example configs run separate ass-size experiments on the same paired
 manifest. `train_paired_concept_krea2.example.json` uses a trigger word
-(`asssize`). `train_paired_slider_krea2.example.json` uses signed adapter
+(`big buttocks`). `train_paired_slider_krea2.example.json` uses signed adapter
 strength: `-1` for the smaller end, `0` for the base model, and `+1` for the
 larger end. They are separate runs with separate output names.
 
@@ -16,7 +16,7 @@ The dataset manifest is a JSON object keyed by absolute positive image paths:
 ```json
 {
   "/path/large.png": {
-    "caption": "A woman in leggings with asssize, viewed from behind",
+    "caption": "A woman in leggings with big buttocks, viewed from behind",
     "negative_image": "/path/small.png",
     "negative_caption": "A woman in leggings, viewed from behind"
   }
