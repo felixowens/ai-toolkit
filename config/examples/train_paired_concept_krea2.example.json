@@ -47,7 +47,7 @@
         ],
         "train": {
           "batch_size": 1,
-          "steps": 1000,
+          "steps": 500,
           "gradient_accumulation": 1,
           "train_unet": true,
           "train_text_encoder": false,
